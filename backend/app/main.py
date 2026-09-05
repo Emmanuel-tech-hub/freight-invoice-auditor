@@ -51,6 +51,18 @@ async def _save_upload_to_temp(file: UploadFile, suffix: str) -> Path:
         return Path(tmp.name)
 
 
+def _diagnostic_preview(raw_text: str) -> str:
+    """Temporary diagnostic: surfaces what was actually extracted from the
+    PDF right in the error message, so a failed upload is self-explanatory
+    instead of requiring back-and-forth to reproduce.
+    """
+    text = raw_text.strip()
+    if not text:
+        return "[Diagnostic: no text was extracted from this PDF at all.]"
+    preview = text[:400].replace("\n", " \\n ")
+    return f"[Diagnostic - extracted text starts with: {preview!r}]"
+
+
 @app.post("/api/upload/contract")
 async def upload_contract(file: UploadFile):
     if not file.filename.lower().endswith(".pdf"):
@@ -64,24 +76,25 @@ async def upload_contract(file: UploadFile):
         tmp_path.unlink(missing_ok=True)
 
     if not contract.rate_cards:
+        preview = _diagnostic_preview(contract.raw_text)
         if contract.ocr_unavailable:
             raise HTTPException(
                 422,
                 "This looks like a scanned/image-based PDF, and OCR isn't available in this "
                 "environment, so no text could be extracted from it. Please upload a "
-                "text-based PDF instead.",
+                f"text-based PDF instead. {preview}",
             )
         if contract.document_classification == "not_a_contract":
             raise HTTPException(
                 422,
                 "This PDF doesn't appear to be a carrier contract or rate card - no freight "
-                "rate terminology was found in it.",
+                f"rate terminology was found in it. {preview}",
             )
         raise HTTPException(
             422,
             "This looks like it could be a contract or rate card, but no rates could be "
             "confidently extracted from it. A clearer copy, or one with rates in a table, "
-            "will usually parse better.",
+            f"will usually parse better. {preview}",
         )
 
     state.contract = contract
@@ -125,23 +138,24 @@ async def upload_invoice(file: UploadFile):
         tmp_path.unlink(missing_ok=True)
 
     if not result.line_items:
+        preview = _diagnostic_preview(getattr(result, "raw_text", "") or "")
         if result.ocr_unavailable:
             raise HTTPException(
                 422,
                 "This looks like a scanned/image-based PDF, and OCR isn't available in this "
                 "environment, so no text could be extracted from it. Please upload a "
-                "text-based PDF instead.",
+                f"text-based PDF instead. {preview}",
             )
         if result.document_classification == "not_an_invoice":
             raise HTTPException(
                 422,
                 "This PDF doesn't appear to be a carrier invoice - no billing line items "
-                "were found in it.",
+                f"were found in it. {preview}",
             )
         raise HTTPException(
             422,
             "This looks like it could be an invoice, but no billed line items could be "
-            "confidently extracted from it.",
+            f"confidently extracted from it. {preview}",
         )
 
     line_items = result.line_items

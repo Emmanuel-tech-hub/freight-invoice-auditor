@@ -17,6 +17,7 @@ class InvoiceParseResult:
     document_classification: str = "invoice"  # "invoice" | "unclear" | "not_an_invoice"
     ocr_used: bool = False
     ocr_unavailable: bool = False
+    raw_text: str = ""
 
 
 def _parse_accessorials(raw: str) -> dict[str, float]:
@@ -168,6 +169,7 @@ def parse_invoice_pdf_detailed(path: str | Path) -> InvoiceParseResult:
         document_classification=classification,
         ocr_used=source.ocr_used,
         ocr_unavailable=source.ocr_unavailable,
+        raw_text=text,
     )
 
 
