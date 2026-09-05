@@ -1,10 +1,10 @@
-fastapi>=0.115
-uvicorn[standard]>=0.32
-pdfplumber>=0.11
-reportlab>=4.2
-python-multipart>=0.0.20
-pydantic>=2.10
-pytesseract>=0.3
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pdfplumber==0.11.10
+reportlab==5.0.1
+python-multipart==0.0.32
+pydantic==2.13.5
+pytesseract==0.3.13
 # pytesseract is the Python side of OCR only. It calls out to the system
 # `tesseract` binary, which isn't installable via pip - it needs an apt
 # package (tesseract-ocr) in the deploy environment. This native Python
