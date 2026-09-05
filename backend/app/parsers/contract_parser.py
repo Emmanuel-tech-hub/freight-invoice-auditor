@@ -6,8 +6,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from app.models import RateCard, normalize_place
+from app.parsers.contract_heuristics import extract_contract_heuristically
 from app.parsers.kv_line import parse_kv_line
-from app.parsers.pdf_text import extract_pdf_text
+from app.parsers.pdf_source import PdfSource, extract_pdf_source, source_from_text
 
 
 class ContractData(BaseModel):
@@ -17,6 +18,13 @@ class ContractData(BaseModel):
     # e.g. {"DETENTION": {"rate": 50.0, "free_units": 2.0}} for accessorials
     # billed per-unit (per hour) above a free allowance, rather than a flat cap.
     raw_text: str = ""
+    document_classification: str = "rate_card"  # "rate_card" | "unclear" | "not_a_contract"
+    review_items: list[RateCard] = Field(default_factory=list)
+    # The subset of rate_cards below the confidence threshold - still used
+    # for auditing (a partial result beats none), but surfaced separately so
+    # a human checks them before anyone disputes an invoice on their basis.
+    ocr_used: bool = False
+    ocr_unavailable: bool = False
 
 
 def _normalize_lane(raw: str) -> str:
@@ -132,13 +140,60 @@ def _parse_natural_contract_text(text: str) -> ContractData:
     )
 
 
+def _tag_as_template(contract: ContractData) -> ContractData:
+    for rc in contract.rate_cards:
+        rc.confidence = 1.0
+        rc.extraction_method = "template"
+    contract.document_classification = "rate_card"
+    return contract
+
+
+def _heuristic_fallback(source: PdfSource) -> ContractData:
+    """Tier 3: general-purpose extraction for documents that don't match
+    either exact template - runs table + line-scan strategies driven by a
+    terminology synonym dictionary, and reports confidence per rate rather
+    than assuming a match is correct. See contract_heuristics.py.
+    """
+    result = extract_contract_heuristically(source)
+    review_items = [rc for rc in result.rate_cards if rc.needs_review]
+
+    return ContractData(
+        rate_cards=result.rate_cards,
+        accessorial_caps=result.accessorial_caps,
+        raw_text=source.full_text,
+        document_classification=result.document_classification,
+        review_items=review_items,
+        ocr_used=source.ocr_used,
+        ocr_unavailable=source.ocr_unavailable,
+    )
+
+
 def parse_contract_text(text: str) -> ContractData:
+    """Text-only entry point (no page/table awareness). Tries the exact
+    templates first, then falls back to the heuristic engine over a
+    synthetic single-page source.
+    """
     contract = _parse_kv_contract_text(text)
     if contract.rate_cards:
-        return contract
-    return _parse_natural_contract_text(text)
+        return _tag_as_template(contract)
+
+    contract = _parse_natural_contract_text(text)
+    if contract.rate_cards:
+        return _tag_as_template(contract)
+
+    return _heuristic_fallback(source_from_text(text))
 
 
 def parse_contract_pdf(path: str | Path) -> ContractData:
-    text = extract_pdf_text(path)
-    return parse_contract_text(text)
+    source = extract_pdf_source(path)
+    text = source.full_text
+
+    contract = _parse_kv_contract_text(text)
+    if contract.rate_cards:
+        return _tag_as_template(contract)
+
+    contract = _parse_natural_contract_text(text)
+    if contract.rate_cards:
+        return _tag_as_template(contract)
+
+    return _heuristic_fallback(source)

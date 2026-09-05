@@ -5,6 +5,12 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+# Extracted items below this confidence are still used (a partial audit beats
+# none), but are flagged everywhere they appear — in the upload response, in
+# discrepancy evidence, and in the dashboard — so a human checks them against
+# the source document before anyone disputes an invoice on their basis.
+REVIEW_CONFIDENCE_THRESHOLD = 0.75
+
 
 def normalize_place(raw: str) -> str:
     """Normalize a place name for lane matching: drop any state/suffix after
@@ -31,7 +37,14 @@ class RateCard(BaseModel):
     minimum_charge: float = 0.0
     fuel_surcharge_pct: float = 0.0
     accessorial_caps: dict[str, float] = Field(default_factory=dict)
-    source_text: str = ""  # raw contract line(s) this was extracted from, for evidence
+    source_text: str = ""  # raw contract line(s)/cell(s) this was extracted from, for evidence
+    source_page: Optional[int] = None  # 1-indexed PDF page the evidence came from
+    confidence: float = 1.0  # 1.0 for exact template/structured matches
+    extraction_method: str = "template"  # "template" | "heuristic" | "llm"
+
+    @property
+    def needs_review(self) -> bool:
+        return self.confidence < REVIEW_CONFIDENCE_THRESHOLD
 
 
 class Shipment(BaseModel):
@@ -64,7 +77,14 @@ class InvoiceLineItem(BaseModel):
     # this total against the sum of contracted accessorial charges implied by
     # the shipment record, instead of checking each code individually.
     billed_total: float = 0.0
-    source_text: str = ""  # raw invoice line(s) this was extracted from, for evidence
+    source_text: str = ""  # raw invoice line(s)/cell(s) this was extracted from, for evidence
+    source_page: Optional[int] = None
+    confidence: float = 1.0
+    extraction_method: str = "template"  # "template" | "heuristic" | "llm"
+
+    @property
+    def needs_review(self) -> bool:
+        return self.confidence < REVIEW_CONFIDENCE_THRESHOLD
 
 
 class Discrepancy(BaseModel):
@@ -78,6 +98,10 @@ class Discrepancy(BaseModel):
     overcharge_amount: float
     contract_evidence: str
     invoice_evidence: str
+    needs_review: bool = False
+    # True when this discrepancy rests on a low-confidence extracted rate
+    # and/or invoice line — verify against the source document before
+    # disputing it with the carrier.
 
 
 class AuditResult(BaseModel):

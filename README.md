@@ -38,15 +38,44 @@ shipments.csv ──┘
    clause and invoice line it's based on. Export as a PDF dispute letter or
    CSV.
 
-## Document format (V1)
+## Document extraction: three tiers, not one template
 
 Real-world carrier contracts and invoices come in wildly inconsistent PDF
-layouts. Rather than guess at arbitrary formats, V1 defines a normalized,
-line-based intermediate schema and expects documents in (or pre-processed
-into) that format — see `backend/scripts/generate_sample_data.py` for a
-full worked example. A future version plugs OCR + an LLM extraction step in
-front of the parsers to translate arbitrary carrier PDFs into this same
-schema without touching the matching engine at all.
+layouts and terminology. Rather than require one hardcoded format, each
+parser tries progressively more general strategies until one produces a
+result:
+
+1. **Exact templates** (below) — two structured/semi-structured formats
+   the parser recognizes outright, at full confidence.
+2. **Heuristic extraction** (`app/parsers/contract_heuristics.py` and
+   `invoice_heuristics.py`) — for anything else. Three independent
+   strategies run over the document (table columns matched by header
+   synonym, single-line lane/rate scanning, and multi-line label:value
+   block scanning), driven by a terminology dictionary
+   (`app/parsers/synonyms.py`) that maps varied wording — "linehaul",
+   "freight rate", "flat rate", "FSC", "detention", "liftgate", "inside
+   delivery", etc. — to canonical concepts. Every extracted rate carries a
+   **confidence score**, a **source page**, and the **exact source text**
+   it came from. Items below the confidence threshold are still used (a
+   partial audit beats none) but are flagged everywhere they appear — the
+   upload response, the dashboard, and each affected discrepancy row — as
+   needing human review before anyone disputes an invoice on their basis.
+3. **OCR fallback** for scanned/image-only PDFs, attempted automatically
+   when a page has effectively no extractable text. Best-effort: it
+   activates if the deploy environment has `tesseract` installed, and
+   reports clearly ("scanned PDF, OCR unavailable") rather than silently
+   returning nothing if not. See **Limitations** below — it does not work
+   on the current Render deployment.
+
+A document is also classified as **not a contract/invoice at all** (no
+freight terminology anywhere in it) versus **freight-related but couldn't
+be confidently parsed** ("unclear"), so the two failure modes get different,
+useful error messages instead of one generic "not found".
+
+Shipment CSVs go through the same philosophy without needing a heuristic
+tier: `app/parsers/shipment_parser.py` maps a wide range of header name
+variants ("Wt (lbs)", "weight_lb", "weight_lbs" → the same field) via a
+synonym table, rather than requiring one exact column-name set.
 
 **Contract PDF** — one line per lane/service rate, plus accessorial caps:
 
@@ -98,10 +127,41 @@ so the engine derives what should have been charged from the shipment's own
 `delivery_type`/`liftgate`/`detention_hours` flags and compares totals,
 rather than flagging a specific accessorial line.
 
-Neither format is exhaustive of what real carriers produce — arbitrary
-layouts are still V2 (OCR/LLM extraction) territory — but having two
-supported shapes makes the difference between "the template" and "a
-template" clearer, and a third is just another parser + fallback away.
+Beyond the exact templates above, the heuristic tier has been tested against
+8 additional contract layouts and 2 invoice layouts with distinct
+terminology, table structures, number formats, and multi-page spread — see
+`backend/tests/test_extraction.py` and
+`backend/scripts/generate_extraction_fixtures.py`. It's still not unlimited:
+see **Limitations** below for what it doesn't handle yet.
+
+## Limitations
+
+The heuristic tier is pattern/synonym-driven, not true language
+understanding, so it has real edges:
+
+- **Free-form legal prose without a clear lane-and-number pattern on one
+  line, one table row, or one label:value block** (e.g. rates described
+  only in a narrative paragraph spanning many sentences) won't be picked
+  up. This is the honest ceiling of a rule-based approach; genuinely
+  unbounded format understanding is an LLM-extraction problem, not a
+  regex/heuristics one.
+- **A single contract-wide detention/free-hours rule** — if different
+  lanes have different free-hour allowances, only one rule is captured
+  (per-lane flat accessorial caps *are* supported correctly; per-lane
+  hourly rules are not, yet).
+- **OCR does not currently work in production.** It's implemented and
+  covered by a test (`test_scanned_pdf_reports_ocr_status_honestly`), but
+  requires the `tesseract` binary, which isn't installable on Render's
+  native Python runtime (no apt access). It needs either a Docker-based
+  Render service with `tesseract-ocr` added via an aptfile, or a cloud OCR
+  API swapped in. Until then, a scanned/image-only PDF gets a clear
+  "OCR isn't available in this environment" message rather than a silent
+  failure or a wrong answer.
+- **Confidence scoring is heuristic, not calibrated** — it reflects how
+  strong a signal each strategy found (an arrow between two places is a
+  stronger lane signal than the word "to"; a specific label like
+  "linehaul" is stronger than the generic word "rate"), not a statistically
+  validated probability.
 
 ## Running it
 
@@ -132,8 +192,8 @@ Run the test suite:
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/upload/contract` | Upload contract PDF |
-| `POST` | `/api/upload/invoice` | Upload invoice PDF |
+| `POST` | `/api/upload/contract` | Upload contract PDF — returns `rate_cards_found`, `needs_review_count`, a human-readable `message`, and `review_items` (low-confidence rates with their evidence) |
+| `POST` | `/api/upload/invoice` | Upload invoice PDF — returns `line_items_found`, `needs_review_count`, `message` |
 | `POST` | `/api/upload/shipments` | Upload shipments CSV |
 | `GET` | `/api/state` | What's currently loaded |
 | `POST` | `/api/audit` | Run the audit, return discrepancies + totals |
@@ -151,23 +211,39 @@ the audit engine, not the platform.
 freight-invoice-auditor/
   backend/
     app/
-      models.py                 # shared domain models (RateCard, Shipment, InvoiceLineItem, Discrepancy, AuditResult)
-      parsers/                  # contract / invoice / shipment parsers
-      engine/                   # matching + discrepancy detection (the "money-finding" logic)
-      reports/                  # PDF/CSV dispute report generation
-      main.py                   # FastAPI app
-    sample_data/                # demo contract.pdf, invoice.pdf, shipments.csv
-    scripts/generate_sample_data.py
+      models.py                       # shared domain models (RateCard, Shipment, InvoiceLineItem, Discrepancy, AuditResult)
+      parsers/
+        contract_parser.py            # tier 1 (exact templates) + dispatches to tier 2/3
+        invoice_parser.py             # same, for invoices
+        contract_heuristics.py        # tier 2/3: table / line-scan / block-scan strategies + confidence
+        invoice_heuristics.py         # same, for invoices
+        synonyms.py                   # freight terminology -> canonical concept dictionary
+        numbers.py                    # currency/percent parsing tolerant of real-world formatting
+        pdf_source.py                 # page-aware text+table extraction, OCR fallback
+        shipment_parser.py            # CSV parsing via column-name synonym mapping
+      engine/                         # matching + discrepancy detection (the "money-finding" logic)
+      reports/                        # PDF/CSV dispute report generation
+      main.py                         # FastAPI app
+    sample_data/                      # demo contract.pdf, invoice.pdf, shipments.csv
+    scripts/
+      generate_sample_data.py
+      generate_extraction_fixtures.py # builds the 8 varied contract test PDFs
+      generate_invoice_fixtures.py    # builds the 2 varied invoice test PDFs
     tests/
+      test_engine.py                  # matching/discrepancy engine + the two exact templates
+      test_extraction.py              # the varied-format heuristic extraction tests
+      fixtures/                       # generated test PDFs/CSVs (see scripts above)
   frontend/
     index.html, styles.css, app.js   # upload UI, savings dashboard, discrepancy table
 ```
 
 ## What's next (beyond V1)
 
-Once the engine proves out on real invoices, the natural next steps are the
-ones in the original product vision: OCR + LLM extraction to handle
-arbitrary (non-templated) carrier PDFs, persistent storage and auth for
-multiple users/companies, an audit trail, and integrations (QuickBooks,
-Xero, NetSuite, SAP, email/cloud storage ingestion) so invoices flow in and
-disputes flow out automatically.
+Extraction now handles a genuinely wide range of contract/invoice layouts
+via the heuristic tier (see above and **Limitations**). The remaining items
+from the original product vision: working OCR in production (a Docker-based
+deploy with `tesseract-ocr` installed), an LLM-extraction tier for the
+free-form prose the heuristics can't confidently parse, persistent storage
+and auth for multiple users/companies, an audit trail, and integrations
+(QuickBooks, Xero, NetSuite, SAP, email/cloud storage ingestion) so invoices
+flow in and disputes flow out automatically.

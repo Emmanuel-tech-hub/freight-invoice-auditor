@@ -1,0 +1,4 @@
+shipment_id,origin,destination,service_level,weight_lbs,miles,ship_date,accessorials
+SHP-2001,"Denver, CO","Salt Lake City, UT",STANDARD,3000,,2026-03-01,LIFTGATE
+SHP-2002,"Denver, CO","Phoenix, AZ",STANDARD,3000,,2026-03-01,
+SHP-2003,"Portland, OR","Boise, ID",STANDARD,3000,,2026-03-01,LIFTGATE

@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.models import InvoiceLineItem
+from app.parsers.invoice_heuristics import extract_invoice_heuristically
 from app.parsers.kv_line import parse_kv_line
-from app.parsers.pdf_text import extract_pdf_text
+from app.parsers.pdf_source import PdfSource, extract_pdf_source, source_from_text
+from app.parsers.synonyms import looks_like_freight_document
+
+
+@dataclass
+class InvoiceParseResult:
+    line_items: list[InvoiceLineItem] = field(default_factory=list)
+    document_classification: str = "invoice"  # "invoice" | "unclear" | "not_an_invoice"
+    ocr_used: bool = False
+    ocr_unavailable: bool = False
 
 
 def _parse_accessorials(raw: str) -> dict[str, float]:
@@ -106,13 +117,59 @@ def _parse_natural_invoice_text(text: str) -> list[InvoiceLineItem]:
     return line_items
 
 
+def _tag_as_template(items: list[InvoiceLineItem]) -> list[InvoiceLineItem]:
+    for item in items:
+        item.confidence = 1.0
+        item.extraction_method = "template"
+    return items
+
+
+def _heuristic_fallback(source: PdfSource) -> list[InvoiceLineItem]:
+    """Tier 3: general-purpose extraction for invoices that don't match
+    either exact template. See invoice_heuristics.py.
+    """
+    return extract_invoice_heuristically(source).line_items
+
+
 def parse_invoice_text(text: str) -> list[InvoiceLineItem]:
     line_items = _parse_kv_invoice_text(text)
     if line_items:
-        return line_items
-    return _parse_natural_invoice_text(text)
+        return _tag_as_template(line_items)
+
+    line_items = _parse_natural_invoice_text(text)
+    if line_items:
+        return _tag_as_template(line_items)
+
+    return _heuristic_fallback(source_from_text(text))
+
+
+def parse_invoice_pdf_detailed(path: str | Path) -> InvoiceParseResult:
+    source = extract_pdf_source(path)
+    text = source.full_text
+
+    line_items = _parse_kv_invoice_text(text)
+    if line_items:
+        return InvoiceParseResult(line_items=_tag_as_template(line_items))
+
+    line_items = _parse_natural_invoice_text(text)
+    if line_items:
+        return InvoiceParseResult(line_items=_tag_as_template(line_items))
+
+    line_items = _heuristic_fallback(source)
+    if line_items:
+        classification = "invoice"
+    elif looks_like_freight_document(text):
+        classification = "unclear"
+    else:
+        classification = "not_an_invoice"
+
+    return InvoiceParseResult(
+        line_items=line_items,
+        document_classification=classification,
+        ocr_used=source.ocr_used,
+        ocr_unavailable=source.ocr_unavailable,
+    )
 
 
 def parse_invoice_pdf(path: str | Path) -> list[InvoiceLineItem]:
-    text = extract_pdf_text(path)
-    return parse_invoice_text(text)
+    return parse_invoice_pdf_detailed(path).line_items

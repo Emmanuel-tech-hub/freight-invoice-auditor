@@ -4,10 +4,11 @@ function fmtMoney(n) {
   return "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function setStatus(key, ok, message) {
+function setStatus(key, ok, message, needsReview) {
   const el = document.getElementById(`status-${key}`);
   el.querySelector(".status-text").textContent = message;
-  el.className = "status " + (ok ? "ok" : "error");
+  const cls = !ok ? "error" : needsReview ? "warn" : "ok";
+  el.className = "status " + cls;
   state[key] = ok;
   updateAuditButton();
 }
@@ -36,15 +37,21 @@ async function uploadFile(key, endpoint, fieldMessage) {
       setStatus(key, false, data.detail || "Upload failed");
       return;
     }
-    setStatus(key, true, fieldMessage(data));
+    setStatus(key, true, fieldMessage(data), data.needs_review_count > 0);
   } catch (err) {
     setStatus(key, false, "Upload failed: " + err.message);
   }
 }
 
 const UPLOAD_CONFIG = {
-  contract: { endpoint: "/api/upload/contract", message: (d) => `Loaded ${d.rate_cards_found} rate(s), ${d.accessorial_caps_found} accessorial cap(s)` },
-  invoice: { endpoint: "/api/upload/invoice", message: (d) => `Loaded ${d.line_items_found} line item(s)` },
+  contract: {
+    endpoint: "/api/upload/contract",
+    message: (d) => d.message || `Loaded ${d.rate_cards_found} rate(s), ${d.accessorial_caps_found} accessorial cap(s)`,
+  },
+  invoice: {
+    endpoint: "/api/upload/invoice",
+    message: (d) => d.message || `Loaded ${d.line_items_found} line item(s)`,
+  },
   shipments: { endpoint: "/api/upload/shipments", message: (d) => `Loaded ${d.shipments_found} shipment(s)` },
 };
 
@@ -114,10 +121,12 @@ function renderResults(audit) {
   tbody.innerHTML = "";
   for (const d of audit.discrepancies) {
     const tr = document.createElement("tr");
+    if (d.needs_review) tr.classList.add("needs-review");
+    const reviewBadge = d.needs_review ? `<span class="review-badge">Needs review</span>` : "";
     tr.innerHTML = `
       <td><span class="shipment-id">${d.shipment_id}</span><br/><span class="sub">${d.invoice_number}</span></td>
       <td>${d.lane}<br/><span class="sub">${d.service_level}</span></td>
-      <td>${d.reason}</td>
+      <td>${reviewBadge}${d.reason}</td>
       <td class="amount">${fmtMoney(d.billed_amount)}</td>
       <td class="amount">${fmtMoney(d.expected_amount)}</td>
       <td class="amount overcharge">${fmtMoney(d.overcharge_amount)}</td>

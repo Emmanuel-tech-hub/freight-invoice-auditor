@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.engine.discrepancy import run_audit
 from app.models import AuditResult, InvoiceLineItem, RateCard, Shipment
 from app.parsers.contract_parser import ContractData, parse_contract_pdf
-from app.parsers.invoice_parser import parse_invoice_pdf
+from app.parsers.invoice_parser import parse_invoice_pdf_detailed
 from app.parsers.shipment_parser import parse_shipment_csv
 from app.reports.dispute_report import build_dispute_report_csv, build_dispute_report_pdf
 
@@ -64,16 +64,51 @@ async def upload_contract(file: UploadFile):
         tmp_path.unlink(missing_ok=True)
 
     if not contract.rate_cards:
+        if contract.ocr_unavailable:
+            raise HTTPException(
+                422,
+                "This looks like a scanned/image-based PDF, and OCR isn't available in this "
+                "environment, so no text could be extracted from it. Please upload a "
+                "text-based PDF instead.",
+            )
+        if contract.document_classification == "not_a_contract":
+            raise HTTPException(
+                422,
+                "This PDF doesn't appear to be a carrier contract or rate card - no freight "
+                "rate terminology was found in it.",
+            )
         raise HTTPException(
             422,
-            "No rate cards found in this PDF. See README for the expected contract format.",
+            "This looks like it could be a contract or rate card, but no rates could be "
+            "confidently extracted from it. A clearer copy, or one with rates in a table, "
+            "will usually parse better.",
         )
 
     state.contract = contract
     state.last_audit = None
+
+    review_count = len(contract.review_items)
+    message = (
+        f"Rate information detected, but {review_count} item(s) need review."
+        if review_count
+        else "Contract parsed successfully."
+    )
+
     return {
         "rate_cards_found": len(contract.rate_cards),
         "accessorial_caps_found": len(contract.accessorial_caps),
+        "needs_review_count": review_count,
+        "message": message,
+        "review_items": [
+            {
+                "lane": rc.lane,
+                "rate_value": rc.rate_value,
+                "confidence": rc.confidence,
+                "source_page": rc.source_page,
+                "source_text": rc.source_text,
+            }
+            for rc in contract.review_items
+        ],
     }
 
 
@@ -83,23 +118,49 @@ async def upload_invoice(file: UploadFile):
         raise HTTPException(400, "Invoice must be a PDF file.")
     tmp_path = await _save_upload_to_temp(file, ".pdf")
     try:
-        line_items = parse_invoice_pdf(tmp_path)
+        result = parse_invoice_pdf_detailed(tmp_path)
     except Exception as exc:  # pragma: no cover - defensive
         raise HTTPException(400, f"Could not parse invoice PDF: {exc}") from exc
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    if not line_items:
+    if not result.line_items:
+        if result.ocr_unavailable:
+            raise HTTPException(
+                422,
+                "This looks like a scanned/image-based PDF, and OCR isn't available in this "
+                "environment, so no text could be extracted from it. Please upload a "
+                "text-based PDF instead.",
+            )
+        if result.document_classification == "not_an_invoice":
+            raise HTTPException(
+                422,
+                "This PDF doesn't appear to be a carrier invoice - no billing line items "
+                "were found in it.",
+            )
         raise HTTPException(
             422,
-            "No invoice line items found in this PDF. See README for the expected invoice format.",
+            "This looks like it could be an invoice, but no billed line items could be "
+            "confidently extracted from it.",
         )
 
+    line_items = result.line_items
     state.invoice_lines = line_items
     state.last_audit = None
-    if line_items:
-        state.carrier_name = line_items[0].invoice_number.split("-")[0] or "Carrier"
-    return {"line_items_found": len(line_items)}
+    state.carrier_name = line_items[0].invoice_number.split("-")[0] or "Carrier"
+
+    review_count = sum(1 for li in line_items if li.needs_review)
+    message = (
+        f"Invoice parsed, but {review_count} item(s) need review."
+        if review_count
+        else "Invoice parsed successfully."
+    )
+
+    return {
+        "line_items_found": len(line_items),
+        "needs_review_count": review_count,
+        "message": message,
+    }
 
 
 @app.post("/api/upload/shipments")
@@ -127,7 +188,9 @@ def get_state():
     return {
         "contract_loaded": state.contract is not None,
         "rate_cards": len(state.contract.rate_cards) if state.contract else 0,
+        "contract_needs_review": len(state.contract.review_items) if state.contract else 0,
         "invoice_line_items": len(state.invoice_lines),
+        "invoice_needs_review": sum(1 for li in state.invoice_lines if li.needs_review),
         "shipments": len(state.shipments),
         "audit_available": state.last_audit is not None,
     }

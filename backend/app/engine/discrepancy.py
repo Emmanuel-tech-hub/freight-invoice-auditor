@@ -22,11 +22,17 @@ def _expected_base_charge(rate_card: RateCard, shipment: Shipment) -> float:
 
 
 def _expected_accessorial_amount(
-    code: str, shipment: Shipment, accessorial_caps: dict[str, float], hourly_rules: dict[str, dict]
+    code: str,
+    shipment: Shipment,
+    rate_card: RateCard,
+    accessorial_caps: dict[str, float],
+    hourly_rules: dict[str, dict],
 ) -> tuple[float, str]:
     """Returns (expected amount, evidence text) for one accessorial code that
     applies to this shipment, per an hourly rule (e.g. detention with free
-    hours) if one exists, else a flat contracted cap.
+    hours) if one exists, else a flat contracted cap - preferring a cap
+    specific to this lane (rate_card.accessorial_caps) over the contract-wide
+    default, since different lanes can carry different accessorial pricing.
     """
     if code in hourly_rules:
         rule = hourly_rules[code]
@@ -36,6 +42,10 @@ def _expected_accessorial_amount(
         amount = max(0.0, qty - free_units) * rate
         evidence = f"{code}: {qty:g}h billable @ ${rate:.2f}/h after {free_units:g}h free = ${amount:.2f}"
         return amount, evidence
+
+    cap = rate_card.accessorial_caps.get(code)
+    if cap is not None:
+        return cap, f"{code} = ${cap:.2f} (contracted cap for lane {rate_card.lane})"
 
     cap = accessorial_caps.get(code)
     if cap is not None:
@@ -53,6 +63,7 @@ def _audit_line_item(
 ) -> tuple[list[Discrepancy], float]:
     """Returns (discrepancies for this line, total expected charge for this line)."""
     discrepancies: list[Discrepancy] = []
+    line_needs_review = rate_card.needs_review or line.needs_review
 
     expected_base = _expected_base_charge(rate_card, shipment)
     if line.base_freight > expected_base + TOLERANCE:
@@ -100,6 +111,8 @@ def _audit_line_item(
 
     if line.accessorial_charges:
         for code, billed_amount in line.accessorial_charges.items():
+            if billed_amount <= TOLERANCE:
+                continue  # a $0.00 line for an inapplicable accessorial isn't an overcharge
             if code not in shipment.accessorials:
                 discrepancies.append(
                     Discrepancy(
@@ -121,7 +134,7 @@ def _audit_line_item(
                 continue
 
             expected_amount, evidence = _expected_accessorial_amount(
-                code, shipment, accessorial_caps, hourly_rules
+                code, shipment, rate_card, accessorial_caps, hourly_rules
             )
             if billed_amount > expected_amount + TOLERANCE:
                 discrepancies.append(
@@ -151,7 +164,9 @@ def _audit_line_item(
         # shipment's own record, and compare the totals.
         evidence_parts = []
         for code in shipment.accessorials:
-            amount, evidence = _expected_accessorial_amount(code, shipment, accessorial_caps, hourly_rules)
+            amount, evidence = _expected_accessorial_amount(
+                code, shipment, rate_card, accessorial_caps, hourly_rules
+            )
             expected_accessorial_total += amount
             evidence_parts.append(evidence)
 
@@ -175,6 +190,10 @@ def _audit_line_item(
                     invoice_evidence=line.source_text,
                 )
             )
+
+    if line_needs_review:
+        for d in discrepancies:
+            d.needs_review = True
 
     expected_total = expected_base + expected_fuel + expected_accessorial_total
     return discrepancies, expected_total

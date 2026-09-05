@@ -1,0 +1,4 @@
+shipment_id,origin,destination,service_level,weight_lbs,miles,ship_date,accessorials
+SHP-3001,"Los Angeles, CA","Phoenix, AZ",STANDARD,2800,,2026-03-01,LIFTGATE
+SHP-3002,"Phoenix, AZ","Albuquerque, NM",STANDARD,2200,,2026-03-01,
+SHP-3003,"Albuquerque, NM","El Paso, TX",STANDARD,1900,,2026-03-01,
