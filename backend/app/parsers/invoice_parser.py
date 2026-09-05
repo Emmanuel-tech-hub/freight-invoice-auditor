@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from app.models import InvoiceLineItem
@@ -24,7 +25,8 @@ def _parse_accessorials(raw: str) -> dict[str, float]:
     return result
 
 
-def parse_invoice_text(text: str) -> list[InvoiceLineItem]:
+def _parse_kv_invoice_text(text: str) -> list[InvoiceLineItem]:
+    """Parse the V1 structured `KEY: value | KEY: value` template."""
     line_items: list[InvoiceLineItem] = []
     current_invoice_number = ""
 
@@ -55,6 +57,60 @@ def parse_invoice_text(text: str) -> list[InvoiceLineItem]:
                 continue
 
     return line_items
+
+
+# ---------------------------------------------------------------------------
+# "Natural" invoice format: plain-English billing lines, e.g.
+#   Fastlane Carrier - Invoice FL-88421
+#   SHP-1001 | Chicago -> Dallas | Base $1,200 | Fuel $96 | Accessorials $135 | Total $1,431
+# ---------------------------------------------------------------------------
+
+_NATURAL_INVOICE_HEADER_RE = re.compile(r"\bInvoice\s+(?P<num>[A-Za-z0-9-]+)", re.IGNORECASE)
+_NATURAL_INVOICE_LINE_RE = re.compile(
+    r"^(?P<shipment_id>[A-Za-z0-9._-]+)\s*\|\s*(?P<origin>[^|]+?)\s*->\s*(?P<dest>[^|]+?)\s*\|"
+    r"\s*Base\s*\$(?P<base>[\d,]+(?:\.\d+)?)\s*\|\s*Fuel\s*\$(?P<fuel>[\d,]+(?:\.\d+)?)\s*\|"
+    r"\s*Accessorials\s*\$(?P<accessorials>[\d,]+(?:\.\d+)?)\s*\|\s*Total\s*\$(?P<total>[\d,]+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_natural_invoice_text(text: str) -> list[InvoiceLineItem]:
+    line_items: list[InvoiceLineItem] = []
+    invoice_number = ""
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if not invoice_number:
+            hm = _NATURAL_INVOICE_HEADER_RE.search(line)
+            if hm:
+                invoice_number = hm.group("num").rstrip(".,")
+
+        m = _NATURAL_INVOICE_LINE_RE.match(line)
+        if m:
+            line_items.append(
+                InvoiceLineItem(
+                    invoice_number=invoice_number,
+                    shipment_id=m.group("shipment_id").strip(),
+                    description=f"{m.group('origin').strip()} to {m.group('dest').strip()}",
+                    base_freight=float(m.group("base").replace(",", "")),
+                    fuel_surcharge=float(m.group("fuel").replace(",", "")),
+                    accessorial_total=float(m.group("accessorials").replace(",", "")),
+                    billed_total=float(m.group("total").replace(",", "")),
+                    source_text=line,
+                )
+            )
+
+    return line_items
+
+
+def parse_invoice_text(text: str) -> list[InvoiceLineItem]:
+    line_items = _parse_kv_invoice_text(text)
+    if line_items:
+        return line_items
+    return _parse_natural_invoice_text(text)
 
 
 def parse_invoice_pdf(path: str | Path) -> list[InvoiceLineItem]:

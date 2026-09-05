@@ -1,0 +1,4 @@
+shipment_id,origin,destination,pieces,weight_lb,delivery_type,liftgate,detention_hours
+SHP-1001,"Chicago, IL","Dallas, TX",12,4200,Residential,Liftgate,0
+SHP-1002,"Chicago, IL","Atlanta, GA",8,2800,Residential,None,0
+SHP-1003,"Dallas, TX","Atlanta, GA",6,1900,Commercial,None,0

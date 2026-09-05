@@ -95,7 +95,7 @@ def test_engine_flags_overcharges_end_to_end():
     assert result.shipments_audited == 2
     assert result.shipments_with_discrepancies == 2
     reasons = [d.reason for d in result.discrepancies]
-    assert any("exceeds the contracted cap" in r for r in reasons)
+    assert any("exceeds the contracted amount" in r for r in reasons)
     assert any("exceeds the contracted" in r and "rate" in r for r in reasons)
     assert result.total_overcharge == 75.00 + 58.00
 
@@ -131,3 +131,36 @@ def test_sample_data_end_to_end():
     # 9 shipments were seeded with an overcharge in generate_sample_data.py
     assert result.shipments_with_discrepancies == 9
     assert result.total_overcharge > 0
+
+
+def test_natural_format_end_to_end():
+    """Plain-English contract/invoice + an alternate shipment CSV schema,
+    as produced by a real carrier rather than the V1 KV-line template.
+    """
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    contract = parse_contract_pdf(fixtures / "natural_contract.pdf")
+    invoice_lines = parse_invoice_pdf(fixtures / "natural_invoice.pdf")
+    shipments = parse_shipment_csv(fixtures / "natural_shipments.csv")
+
+    assert len(contract.rate_cards) == 3
+    assert contract.accessorial_caps["RESIDENTIAL"] == 75.0
+    assert contract.accessorial_caps["LIFTGATE"] == 60.0
+    assert contract.hourly_rules["DETENTION"] == {"rate": 50.0, "free_units": 2.0}
+
+    assert len(shipments) == 3
+    assert shipments[0].accessorials == ["RESIDENTIAL", "LIFTGATE"]
+
+    assert len(invoice_lines) == 3
+    assert invoice_lines[0].accessorial_total == 135.0
+
+    result = run_audit(
+        invoice_lines, shipments, contract.rate_cards, contract.accessorial_caps, contract.hourly_rules
+    )
+
+    assert result.unmatched_shipment_ids == []
+    assert result.shipments_audited == 3
+    # SHP-1003 is billed $850 base against a contracted $800 flat rate,
+    # and its fuel surcharge is computed off the inflated base too.
+    assert result.shipments_with_discrepancies == 1
+    assert {d.shipment_id for d in result.discrepancies} == {"SHP-1003"}
+    assert result.total_overcharge == 54.0

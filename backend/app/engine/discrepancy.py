@@ -21,11 +21,35 @@ def _expected_base_charge(rate_card: RateCard, shipment: Shipment) -> float:
     return max(base, rate_card.minimum_charge)
 
 
+def _expected_accessorial_amount(
+    code: str, shipment: Shipment, accessorial_caps: dict[str, float], hourly_rules: dict[str, dict]
+) -> tuple[float, str]:
+    """Returns (expected amount, evidence text) for one accessorial code that
+    applies to this shipment, per an hourly rule (e.g. detention with free
+    hours) if one exists, else a flat contracted cap.
+    """
+    if code in hourly_rules:
+        rule = hourly_rules[code]
+        rate = rule.get("rate", 0.0)
+        free_units = rule.get("free_units", 0.0)
+        qty = shipment.accessorial_quantities.get(code, 0.0)
+        amount = max(0.0, qty - free_units) * rate
+        evidence = f"{code}: {qty:g}h billable @ ${rate:.2f}/h after {free_units:g}h free = ${amount:.2f}"
+        return amount, evidence
+
+    cap = accessorial_caps.get(code)
+    if cap is not None:
+        return cap, f"{code} = ${cap:.2f} (contracted cap)"
+
+    return 0.0, f"{code} (no contracted rate found for this accessorial)"
+
+
 def _audit_line_item(
     line: InvoiceLineItem,
     shipment: Shipment,
     rate_card: RateCard,
     accessorial_caps: dict[str, float],
+    hourly_rules: dict[str, dict],
 ) -> tuple[list[Discrepancy], float]:
     """Returns (discrepancies for this line, total expected charge for this line)."""
     discrepancies: list[Discrepancy] = []
@@ -73,29 +97,66 @@ def _audit_line_item(
         )
 
     expected_accessorial_total = 0.0
-    for code, billed_amount in line.accessorial_charges.items():
-        if code not in shipment.accessorials:
-            discrepancies.append(
-                Discrepancy(
-                    shipment_id=shipment.shipment_id,
-                    invoice_number=line.invoice_number,
-                    lane=shipment.lane,
-                    service_level=shipment.service_level,
-                    reason=(
-                        f"Accessorial '{code}' billed at ${billed_amount:,.2f} but is not "
-                        "recorded as performed on this shipment."
-                    ),
-                    billed_amount=billed_amount,
-                    expected_amount=0.0,
-                    overcharge_amount=round(billed_amount, 2),
-                    contract_evidence=f"No shipment record authorizing accessorial '{code}'.",
-                    invoice_evidence=line.source_text,
-                )
-            )
-            continue
 
-        cap = accessorial_caps.get(code)
-        if cap is not None and billed_amount > cap + TOLERANCE:
+    if line.accessorial_charges:
+        for code, billed_amount in line.accessorial_charges.items():
+            if code not in shipment.accessorials:
+                discrepancies.append(
+                    Discrepancy(
+                        shipment_id=shipment.shipment_id,
+                        invoice_number=line.invoice_number,
+                        lane=shipment.lane,
+                        service_level=shipment.service_level,
+                        reason=(
+                            f"Accessorial '{code}' billed at ${billed_amount:,.2f} but is not "
+                            "recorded as performed on this shipment."
+                        ),
+                        billed_amount=billed_amount,
+                        expected_amount=0.0,
+                        overcharge_amount=round(billed_amount, 2),
+                        contract_evidence=f"No shipment record authorizing accessorial '{code}'.",
+                        invoice_evidence=line.source_text,
+                    )
+                )
+                continue
+
+            expected_amount, evidence = _expected_accessorial_amount(
+                code, shipment, accessorial_caps, hourly_rules
+            )
+            if billed_amount > expected_amount + TOLERANCE:
+                discrepancies.append(
+                    Discrepancy(
+                        shipment_id=shipment.shipment_id,
+                        invoice_number=line.invoice_number,
+                        lane=shipment.lane,
+                        service_level=shipment.service_level,
+                        reason=(
+                            f"Accessorial '{code}' billed at ${billed_amount:,.2f} exceeds the "
+                            f"contracted amount of ${expected_amount:,.2f}."
+                        ),
+                        billed_amount=billed_amount,
+                        expected_amount=expected_amount,
+                        overcharge_amount=round(billed_amount - expected_amount, 2),
+                        contract_evidence=evidence,
+                        invoice_evidence=line.source_text,
+                    )
+                )
+                expected_accessorial_total += expected_amount
+            else:
+                expected_accessorial_total += billed_amount
+
+    elif line.accessorial_total is not None:
+        # Some invoices bill accessorials as one lump sum rather than
+        # itemized by code. Derive what should have been charged from the
+        # shipment's own record, and compare the totals.
+        evidence_parts = []
+        for code in shipment.accessorials:
+            amount, evidence = _expected_accessorial_amount(code, shipment, accessorial_caps, hourly_rules)
+            expected_accessorial_total += amount
+            evidence_parts.append(evidence)
+
+        billed_accessorial_total = line.accessorial_total
+        if billed_accessorial_total > expected_accessorial_total + TOLERANCE:
             discrepancies.append(
                 Discrepancy(
                     shipment_id=shipment.shipment_id,
@@ -103,19 +164,17 @@ def _audit_line_item(
                     lane=shipment.lane,
                     service_level=shipment.service_level,
                     reason=(
-                        f"Accessorial '{code}' billed at ${billed_amount:,.2f} exceeds the "
-                        f"contracted cap of ${cap:,.2f}."
+                        f"Accessorials billed at ${billed_accessorial_total:,.2f} exceed the "
+                        f"contracted total of ${expected_accessorial_total:,.2f} for this "
+                        "shipment's recorded accessorials."
                     ),
-                    billed_amount=billed_amount,
-                    expected_amount=cap,
-                    overcharge_amount=round(billed_amount - cap, 2),
-                    contract_evidence=f"Accessorial cap CODE: {code} | MAX_AMOUNT: {cap:.2f}",
+                    billed_amount=billed_accessorial_total,
+                    expected_amount=expected_accessorial_total,
+                    overcharge_amount=round(billed_accessorial_total - expected_accessorial_total, 2),
+                    contract_evidence="; ".join(evidence_parts) if evidence_parts else "No accessorials on shipment record.",
                     invoice_evidence=line.source_text,
                 )
             )
-            expected_accessorial_total += cap
-        else:
-            expected_accessorial_total += billed_amount
 
     expected_total = expected_base + expected_fuel + expected_accessorial_total
     return discrepancies, expected_total
@@ -126,7 +185,9 @@ def run_audit(
     shipments: list[Shipment],
     rate_cards: list[RateCard],
     accessorial_caps: dict[str, float],
+    hourly_rules: dict[str, dict] | None = None,
 ) -> AuditResult:
+    hourly_rules = hourly_rules or {}
     shipments_by_id = index_shipments(shipments)
     rate_cards_by_key = index_rate_cards(rate_cards)
 
@@ -148,7 +209,7 @@ def run_audit(
             continue
 
         line_discrepancies, expected_total = _audit_line_item(
-            line, shipment, rate_card, accessorial_caps
+            line, shipment, rate_card, accessorial_caps, hourly_rules
         )
 
         total_billed += line.billed_total

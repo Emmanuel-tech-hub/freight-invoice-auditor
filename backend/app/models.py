@@ -6,6 +6,15 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+def normalize_place(raw: str) -> str:
+    """Normalize a place name for lane matching: drop any state/suffix after
+    a comma (so "Chicago, IL" and "Chicago" both key to "CHICAGO"), since
+    invoices don't always repeat the state carried in the contract/shipment
+    records.
+    """
+    return raw.split(",")[0].strip().upper()
+
+
 class AccessorialFee(BaseModel):
     code: str
     description: str
@@ -34,10 +43,12 @@ class Shipment(BaseModel):
     miles: Optional[float] = None
     ship_date: Optional[str] = None
     accessorials: list[str] = Field(default_factory=list)
+    accessorial_quantities: dict[str, float] = Field(default_factory=dict)
+    # e.g. {"DETENTION": 3} hours, for accessorials billed per-unit rather than flat.
 
     @property
     def lane(self) -> str:
-        return f"{self.origin.strip().upper()}-{self.destination.strip().upper()}"
+        return f"{normalize_place(self.origin)}-{normalize_place(self.destination)}"
 
 
 class InvoiceLineItem(BaseModel):
@@ -47,6 +58,11 @@ class InvoiceLineItem(BaseModel):
     base_freight: float = 0.0
     fuel_surcharge: float = 0.0
     accessorial_charges: dict[str, float] = Field(default_factory=dict)
+    accessorial_total: Optional[float] = None
+    # Some invoices bill accessorials as one lump sum rather than itemized by
+    # code. When set (and accessorial_charges is empty), the engine compares
+    # this total against the sum of contracted accessorial charges implied by
+    # the shipment record, instead of checking each code individually.
     billed_total: float = 0.0
     source_text: str = ""  # raw invoice line(s) this was extracted from, for evidence
 

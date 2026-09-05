@@ -147,6 +147,7 @@ def audit():
         shipments=state.shipments,
         rate_cards=state.contract.rate_cards,
         accessorial_caps=state.contract.accessorial_caps,
+        hourly_rules=state.contract.hourly_rules,
     )
     state.last_audit = result
     return result

@@ -71,6 +71,38 @@ shipment_id,origin,destination,service_level,weight_lbs,miles,ship_date,accessor
 SHP-1003,CHICAGO IL,DALLAS TX,LTL,4100,,2026-02-14,LIFTGATE
 ```
 
+### A second supported format ("natural" style)
+
+Each parser also recognizes a plain-English style, tried automatically if
+the structured template above doesn't match — no mode switch needed, just
+upload either kind. Rate cards are treated as `FLAT` per-lane rates, and
+detention-style accessorials can carry a free-hours allowance:
+
+```
+Chicago, IL -> Dallas, TX: Base $1,200 | Fuel 8% | Residential $75 | Liftgate $60
+Detention: $50/hour after first 2 free hours, only when documented.
+```
+
+```
+Invoice FL-88421
+SHP-1001 | Chicago -> Dallas | Base $1,200 | Fuel $96 | Accessorials $135 | Total $1,431
+```
+
+```
+shipment_id,origin,destination,pieces,weight_lb,delivery_type,liftgate,detention_hours
+SHP-1001,"Chicago, IL","Dallas, TX",12,4200,Residential,Liftgate,0
+```
+
+Here, accessorials are billed as one lump sum rather than itemized by code,
+so the engine derives what should have been charged from the shipment's own
+`delivery_type`/`liftgate`/`detention_hours` flags and compares totals,
+rather than flagging a specific accessorial line.
+
+Neither format is exhaustive of what real carriers produce — arbitrary
+layouts are still V2 (OCR/LLM extraction) territory — but having two
+supported shapes makes the difference between "the template" and "a
+template" clearer, and a third is just another parser + fallback away.
+
 ## Running it
 
 ```bash
