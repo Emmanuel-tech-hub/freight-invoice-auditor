@@ -7,42 +7,85 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header>
-    <h1>Freight Invoice Auditor</h1>
-    <p class="subtitle">Upload a carrier contract, an invoice, and your shipment records to find overcharges.</p>
+  <div class="noise"></div>
+
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="eyebrow">
+        <span class="eyebrow-dot"></span>
+        Money-finding engine &middot; V1
+      </div>
+      <h1>Freight Invoice<br />Auditor</h1>
+      <p class="subtitle">
+        Upload a carrier contract, an invoice, and your shipment records.
+        We match every billed line to what your contract actually says,
+        and show you exactly what you're owed &mdash; with receipts.
+      </p>
+    </div>
+    <svg class="hero-wave" viewBox="0 0 1440 80" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0,40 C240,90 480,0 720,30 C960,60 1200,10 1440,40 L1440,80 L0,80 Z"></path>
+    </svg>
   </header>
 
   <main>
     <section class="uploads">
-      <div class="upload-card" id="card-contract">
-        <h2>1. Contract / Rate Card</h2>
+      <div class="upload-card" id="card-contract" data-key="contract">
+        <div class="step-badge">01</div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16.5h6M9 9.5h2"/></svg>
+        </div>
+        <h2>Contract / Rate Card</h2>
         <p class="hint">PDF with contracted lane rates and accessorial caps.</p>
-        <input type="file" id="file-contract" accept="application/pdf" />
-        <div class="status" id="status-contract">Not uploaded</div>
+        <label class="dropzone" for="file-contract">
+          <input type="file" id="file-contract" accept="application/pdf" hidden />
+          <span class="dz-label">Drop file or <span class="dz-browse">browse</span></span>
+        </label>
+        <div class="status" id="status-contract"><span class="status-dot"></span><span class="status-text">Not uploaded</span></div>
       </div>
 
-      <div class="upload-card" id="card-invoice">
-        <h2>2. Carrier Invoice</h2>
+      <div class="upload-card" id="card-invoice" data-key="invoice">
+        <div class="step-badge">02</div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 8h8M8 12h8M8 16h4"/><circle cx="17" cy="17.5" r="3.2" fill="currentColor" stroke="none" opacity="0"/></svg>
+        </div>
+        <h2>Carrier Invoice</h2>
         <p class="hint">PDF with billed line items per shipment.</p>
-        <input type="file" id="file-invoice" accept="application/pdf" />
-        <div class="status" id="status-invoice">Not uploaded</div>
+        <label class="dropzone" for="file-invoice">
+          <input type="file" id="file-invoice" accept="application/pdf" hidden />
+          <span class="dz-label">Drop file or <span class="dz-browse">browse</span></span>
+        </label>
+        <div class="status" id="status-invoice"><span class="status-dot"></span><span class="status-text">Not uploaded</span></div>
       </div>
 
-      <div class="upload-card" id="card-shipments">
-        <h2>3. Shipment Records</h2>
+      <div class="upload-card" id="card-shipments" data-key="shipments">
+        <div class="step-badge">03</div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="10" width="12" height="7" rx="1"/><path d="M15 12h3l3 2.5V17h-6"/><circle cx="7.5" cy="19" r="1.6"/><circle cx="17" cy="19" r="1.6"/></svg>
+        </div>
+        <h2>Shipment Records</h2>
         <p class="hint">CSV with shipment lane, weight, and accessorials performed.</p>
-        <input type="file" id="file-shipments" accept=".csv" />
-        <div class="status" id="status-shipments">Not uploaded</div>
+        <label class="dropzone" for="file-shipments">
+          <input type="file" id="file-shipments" accept=".csv" hidden />
+          <span class="dz-label">Drop file or <span class="dz-browse">browse</span></span>
+        </label>
+        <div class="status" id="status-shipments"><span class="status-dot"></span><span class="status-text">Not uploaded</span></div>
       </div>
     </section>
 
     <section class="actions">
-      <button id="btn-audit" disabled>Run Audit</button>
+      <button id="btn-audit" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Run Audit
+      </button>
       <span id="audit-error" class="error"></span>
     </section>
 
     <section id="results" class="hidden">
-      <h2>Savings Dashboard</h2>
+      <div class="section-heading">
+        <h2>Savings Dashboard</h2>
+        <p id="stat-meta" class="hint"></p>
+      </div>
+
       <div class="stats">
         <div class="stat-tile">
           <div class="stat-label">Total Billed</div>
@@ -53,34 +96,50 @@
           <div class="stat-value" id="stat-expected">$0</div>
         </div>
         <div class="stat-tile highlight">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2v20M17 6.5c0-2-2.2-3.5-5-3.5s-5 1.6-5 3.7c0 4.4 10 2.1 10 6.5 0 2.1-2.2 3.8-5 3.8s-5-1.5-5-3.5"/></svg>
+          </div>
           <div class="stat-label">Potential Overcharge</div>
           <div class="stat-value" id="stat-overcharge">$0</div>
         </div>
       </div>
-      <p id="stat-meta" class="hint"></p>
 
       <div class="export-row">
-        <a id="export-pdf" href="/api/export/dispute-report.pdf">Export Dispute Report (PDF)</a>
-        <a id="export-csv" href="/api/export/dispute-report.csv">Export Dispute Report (CSV)</a>
+        <a id="export-pdf" class="export-btn" href="/api/export/dispute-report.pdf">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Dispute Report (PDF)
+        </a>
+        <a id="export-csv" class="export-btn ghost" href="/api/export/dispute-report.csv">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Dispute Report (CSV)
+        </a>
       </div>
 
-      <h2>Discrepancies</h2>
-      <table id="discrepancy-table">
-        <thead>
-          <tr>
-            <th>Shipment</th>
-            <th>Lane</th>
-            <th>Issue</th>
-            <th>Billed</th>
-            <th>Expected</th>
-            <th>Overcharge</th>
-            <th>Evidence</th>
-          </tr>
-        </thead>
-        <tbody id="discrepancy-rows"></tbody>
-      </table>
+      <div class="section-heading">
+        <h2>Discrepancies</h2>
+      </div>
+      <div class="table-wrap">
+        <table id="discrepancy-table">
+          <thead>
+            <tr>
+              <th>Shipment</th>
+              <th>Lane</th>
+              <th>Issue</th>
+              <th class="num">Billed</th>
+              <th class="num">Expected</th>
+              <th class="num">Overcharge</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody id="discrepancy-rows"></tbody>
+        </table>
+      </div>
     </section>
   </main>
+
+  <footer>
+    <p>Freight Invoice Auditor &middot; V1 audit engine</p>
+  </footer>
 
   <script src="app.js"></script>
 </body>

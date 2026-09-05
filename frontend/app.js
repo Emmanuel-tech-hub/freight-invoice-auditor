@@ -6,7 +6,7 @@ function fmtMoney(n) {
 
 function setStatus(key, ok, message) {
   const el = document.getElementById(`status-${key}`);
-  el.textContent = message;
+  el.querySelector(".status-text").textContent = message;
   el.className = "status " + (ok ? "ok" : "error");
   state[key] = ok;
   updateAuditButton();
@@ -23,7 +23,7 @@ async function uploadFile(key, endpoint, fieldMessage) {
   if (!file) return;
 
   const el = document.getElementById(`status-${key}`);
-  el.textContent = "Uploading...";
+  el.querySelector(".status-text").textContent = "Uploading...";
   el.className = "status";
 
   const formData = new FormData();
@@ -42,22 +42,42 @@ async function uploadFile(key, endpoint, fieldMessage) {
   }
 }
 
-document.getElementById("file-contract").addEventListener("change", () =>
-  uploadFile("contract", "/api/upload/contract", (d) => `Loaded ${d.rate_cards_found} rate(s), ${d.accessorial_caps_found} accessorial cap(s)`)
-);
-document.getElementById("file-invoice").addEventListener("change", () =>
-  uploadFile("invoice", "/api/upload/invoice", (d) => `Loaded ${d.line_items_found} line item(s)`)
-);
-document.getElementById("file-shipments").addEventListener("change", () =>
-  uploadFile("shipments", "/api/upload/shipments", (d) => `Loaded ${d.shipments_found} shipment(s)`)
-);
+const UPLOAD_CONFIG = {
+  contract: { endpoint: "/api/upload/contract", message: (d) => `Loaded ${d.rate_cards_found} rate(s), ${d.accessorial_caps_found} accessorial cap(s)` },
+  invoice: { endpoint: "/api/upload/invoice", message: (d) => `Loaded ${d.line_items_found} line item(s)` },
+  shipments: { endpoint: "/api/upload/shipments", message: (d) => `Loaded ${d.shipments_found} shipment(s)` },
+};
+
+for (const key of Object.keys(UPLOAD_CONFIG)) {
+  const input = document.getElementById(`file-${key}`);
+  const card = document.getElementById(`card-${key}`);
+  const cfg = UPLOAD_CONFIG[key];
+
+  input.addEventListener("change", () => uploadFile(key, cfg.endpoint, cfg.message));
+
+  card.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    card.classList.add("dragover");
+  });
+  card.addEventListener("dragleave", () => card.classList.remove("dragover"));
+  card.addEventListener("drop", (e) => {
+    e.preventDefault();
+    card.classList.remove("dragover");
+    if (e.dataTransfer.files.length) {
+      input.files = e.dataTransfer.files;
+      uploadFile(key, cfg.endpoint, cfg.message);
+    }
+  });
+}
 
 document.getElementById("btn-audit").addEventListener("click", async () => {
   const errEl = document.getElementById("audit-error");
   errEl.textContent = "";
   const btn = document.getElementById("btn-audit");
   btn.disabled = true;
-  btn.textContent = "Auditing...";
+  const label = btn.lastChild;
+  const originalLabel = label.textContent;
+  label.textContent = " Auditing...";
 
   try {
     const res = await fetch("/api/audit", { method: "POST" });
@@ -71,7 +91,7 @@ document.getElementById("btn-audit").addEventListener("click", async () => {
     errEl.textContent = "Audit failed: " + err.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Run Audit";
+    label.textContent = originalLabel;
   }
 });
 
@@ -95,8 +115,8 @@ function renderResults(audit) {
   for (const d of audit.discrepancies) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${d.shipment_id}<br/><span class="evidence">${d.invoice_number}</span></td>
-      <td>${d.lane}<br/><span class="evidence">${d.service_level}</span></td>
+      <td><span class="shipment-id">${d.shipment_id}</span><br/><span class="sub">${d.invoice_number}</span></td>
+      <td>${d.lane}<br/><span class="sub">${d.service_level}</span></td>
       <td>${d.reason}</td>
       <td class="amount">${fmtMoney(d.billed_amount)}</td>
       <td class="amount">${fmtMoney(d.expected_amount)}</td>
