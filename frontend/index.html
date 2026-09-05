@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Freight Invoice Auditor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Freight Invoice Auditor</h1>
+    <p class="subtitle">Upload a carrier contract, an invoice, and your shipment records to find overcharges.</p>
+  </header>
+
+  <main>
+    <section class="uploads">
+      <div class="upload-card" id="card-contract">
+        <h2>1. Contract / Rate Card</h2>
+        <p class="hint">PDF with contracted lane rates and accessorial caps.</p>
+        <input type="file" id="file-contract" accept="application/pdf" />
+        <div class="status" id="status-contract">Not uploaded</div>
+      </div>
+
+      <div class="upload-card" id="card-invoice">
+        <h2>2. Carrier Invoice</h2>
+        <p class="hint">PDF with billed line items per shipment.</p>
+        <input type="file" id="file-invoice" accept="application/pdf" />
+        <div class="status" id="status-invoice">Not uploaded</div>
+      </div>
+
+      <div class="upload-card" id="card-shipments">
+        <h2>3. Shipment Records</h2>
+        <p class="hint">CSV with shipment lane, weight, and accessorials performed.</p>
+        <input type="file" id="file-shipments" accept=".csv" />
+        <div class="status" id="status-shipments">Not uploaded</div>
+      </div>
+    </section>
+
+    <section class="actions">
+      <button id="btn-audit" disabled>Run Audit</button>
+      <span id="audit-error" class="error"></span>
+    </section>
+
+    <section id="results" class="hidden">
+      <h2>Savings Dashboard</h2>
+      <div class="stats">
+        <div class="stat-tile">
+          <div class="stat-label">Total Billed</div>
+          <div class="stat-value" id="stat-billed">$0</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Total Expected (Contracted)</div>
+          <div class="stat-value" id="stat-expected">$0</div>
+        </div>
+        <div class="stat-tile highlight">
+          <div class="stat-label">Potential Overcharge</div>
+          <div class="stat-value" id="stat-overcharge">$0</div>
+        </div>
+      </div>
+      <p id="stat-meta" class="hint"></p>
+
+      <div class="export-row">
+        <a id="export-pdf" href="/api/export/dispute-report.pdf">Export Dispute Report (PDF)</a>
+        <a id="export-csv" href="/api/export/dispute-report.csv">Export Dispute Report (CSV)</a>
+      </div>
+
+      <h2>Discrepancies</h2>
+      <table id="discrepancy-table">
+        <thead>
+          <tr>
+            <th>Shipment</th>
+            <th>Lane</th>
+            <th>Issue</th>
+            <th>Billed</th>
+            <th>Expected</th>
+            <th>Overcharge</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody id="discrepancy-rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
