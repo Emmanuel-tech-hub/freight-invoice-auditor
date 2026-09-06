@@ -67,8 +67,34 @@ def build_invoice_sentence() -> None:
     c.save()
 
 
+def build_invoice_headered_moneyrow() -> None:
+    """A header line naming columns, then plain whitespace-separated data
+    rows with no delimiters - not a real PDF table, just aligned text.
+    """
+    from reportlab.pdfgen import canvas
+
+    lines = [
+        "Fastlane Carrier - Test Invoice",
+        "Invoice #: TEST-002",
+        "Shipment Lane Base Fuel Accessorials Total",
+        "SHP-1001 Chicago-Dallas $1,200 $96 $195 $1,491",
+        "SHP-1002 Chicago-Atlanta $950 $76 $75 $1,101",
+        "Notes:",
+        "Deliberate error: extra accessorial charge on SHP-1001.",
+    ]
+    c = canvas.Canvas(str(FIXTURES_DIR / "invoice_headered_moneyrow.pdf"), pagesize=letter)
+    width, height = letter
+    y = height - 60
+    c.setFont("Helvetica", 10)
+    for line in lines:
+        c.drawString(50, y, line)
+        y -= 16
+    c.save()
+
+
 if __name__ == "__main__":
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
     build_invoice_table()
     build_invoice_sentence()
+    build_invoice_headered_moneyrow()
     print(f"Invoice test fixtures written to {FIXTURES_DIR}")

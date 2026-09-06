@@ -134,6 +134,23 @@ def test_invoice_sentence_format():
     assert by_id["SHP-3001"].fuel_surcharge == 91.0
 
 
+def test_invoice_headered_moneyrow_format():
+    """A header line naming columns ('Shipment Lane Base Fuel Accessorials
+    Total') followed by plain whitespace-separated data rows with no
+    delimiters at all - not a real PDF table object, so pdfplumber's table
+    detection can't see it. Amounts are aligned to header columns by their
+    order/count instead of by splitting the row into fields.
+    """
+    result = parse_invoice_pdf_detailed(FIXTURES / "invoice_headered_moneyrow.pdf")
+    assert result.document_classification == "invoice"
+    assert len(result.line_items) == 2
+    by_id = {li.shipment_id: li for li in result.line_items}
+    assert by_id["SHP-1001"].base_freight == 1200.0
+    assert by_id["SHP-1001"].fuel_surcharge == 96.0
+    assert by_id["SHP-1001"].accessorial_total == 195.0
+    assert by_id["SHP-1001"].billed_total == 1491.0
+
+
 def test_heuristic_contract_end_to_end_audit_with_per_lane_accessorial_caps():
     """Full pipeline on a heuristically-extracted (table) contract: matches
     invoice lines to shipments to rate cards, and correctly applies each
